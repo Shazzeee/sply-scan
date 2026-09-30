@@ -1770,6 +1770,10 @@ function renderConfirmView(){
 
 function closeSheet(){
   overlay.classList.remove('show');
+  if(manualInputEl){
+    manualInputEl.value = '';
+    if(!screenScan.classList.contains('hidden')) manualInputEl.focus();
+  }
 }
 overlay.addEventListener('click', (e) => { if(e.target === overlay) closeSheet(); });
 
@@ -1780,14 +1784,20 @@ function escapeHtml(s){
 }
 function escapeAttr(s){ return escapeHtml(s); }
 
-document.getElementById('manualBtn').addEventListener('click', () => {
-  const v = document.getElementById('manualInput').value.trim();
-  if(v) showResult(v);
-});
-document.getElementById('manualInput').addEventListener('keydown', (e) => {
+const manualInputEl = document.getElementById('manualInput');
+function submitManualScan(){
+  const v = manualInputEl.value.trim();
+  if(v){
+    showResult(v);
+    manualInputEl.value = '';
+    document.getElementById('searchClearBtn')?.classList.remove('show');
+  }
+}
+document.getElementById('manualBtn').addEventListener('click', submitManualScan);
+manualInputEl.addEventListener('keydown', (e) => {
   if(e.key === 'Enter'){
-    const v = e.target.value.trim();
-    if(v) showResult(v);
+    e.preventDefault();
+    submitManualScan();
   }
 });
 
