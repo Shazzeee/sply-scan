@@ -258,7 +258,7 @@ body{
   padding:8px 0 10px;
   border-bottom:1px dashed var(--line);
 }
-.tag-photo-sm{
+.tag-photo-sm{ cursor:pointer;
   width:56px;height:56px;
   flex-shrink:0;
   border-radius:6px;
@@ -1035,6 +1035,34 @@ body{
   background:var(--ink);
   color:var(--paper);
 }
+.photo-lightbox{
+  display:none;
+  position:fixed; inset:0;
+  background:rgba(0,0,0,0.92);
+  z-index:200;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+.photo-lightbox.show{ display:flex; }
+.photo-lightbox img{
+  max-width:100%;
+  max-height:100%;
+  border-radius:6px;
+  object-fit:contain;
+}
+.lightbox-close{
+  position:absolute;
+  top:18px; right:18px;
+  width:40px; height:40px;
+  border-radius:50%;
+  border:none;
+  background:rgba(255,255,255,0.15);
+  color:#fff;
+  font-size:26px;
+  line-height:1;
+  cursor:pointer;
+}
 </style>
 </head>
 <body>
@@ -1128,6 +1156,10 @@ body{
 </div>
 <div class="toast" id="toast"></div>
 <div id="printArea"></div>
+<div class="photo-lightbox" id="photoLightbox" onclick="closePhotoLightbox()">
+  <button class="lightbox-close" aria-label="Fermer">×</button>
+  <img id="photoLightboxImg" src="" alt="">
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1488,7 +1520,7 @@ function renderStepView(){
     <div class="tag-handle"></div>
     <button class="tag-close" onclick="closeSheet()">×</button>
     <div class="tag-header">
-      <div class="tag-photo-sm">${photoInner}</div>
+      <div class="tag-photo-sm"${item.img ? ' onclick="openPhotoLightbox()" role="button" aria-label="Agrandir la photo"' : ''}>${photoInner}</div>
       <div class="tag-header-text">
         <div class="tag-cat">${escapeHtml(item.cat)} · ${escapeHtml(item.type)}</div>
         <div class="tag-vendor">${escapeHtml(item.vendor)}</div>
@@ -1768,6 +1800,14 @@ function renderConfirmView(){
   });
 }
 
+function openPhotoLightbox(){
+  if(!currentItem || !currentItem.img) return;
+  document.getElementById('photoLightboxImg').src = currentItem.img;
+  document.getElementById('photoLightbox').classList.add('show');
+}
+function closePhotoLightbox(){
+  document.getElementById('photoLightbox').classList.remove('show');
+}
 function closeSheet(){
   overlay.classList.remove('show');
   if(manualInputEl){
