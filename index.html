@@ -1063,6 +1063,30 @@ body{
   line-height:1;
   cursor:pointer;
 }
+.carton-row{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.carton-row label, .carton-field label{
+  font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700;
+  color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap;
+}
+.carton-row input{
+  flex:1; min-width:0; font-family:'JetBrains Mono',monospace; font-size:16px;
+  padding:10px 12px; border:2px solid var(--rust); border-radius:3px;
+  background:var(--white); color:var(--ink);
+}
+.carton-field{ display:flex; align-items:center; justify-content:center; gap:10px; margin:-8px 0 18px; }
+.carton-field input{
+  width:90px; text-align:center; font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700;
+  padding:8px; border:2px solid var(--rust); border-radius:6px; background:var(--white); color:var(--ink);
+}
+#cartonFilterRow{ background:var(--paper); border-bottom:1px solid var(--line); padding-bottom:10px; }
+#cartonFilterRow.hidden{ display:none; }
+.delivery-row{ cursor:pointer; }
+.delivery-row .c{ font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--rust); margin-top:2px; line-height:1.35; }
+.carton-line{ display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px dashed var(--line); }
+.carton-line .cl-name{ flex:1; font-family:'Oswald',sans-serif; font-weight:600; font-size:18px; }
+.carton-line .cl-qty{ font-family:'JetBrains Mono',monospace; font-weight:700; font-size:16px; color:var(--rust); }
+.carton-line .cl-rm{ background:none; border:1px solid var(--line); color:var(--muted); border-radius:5px; padding:6px 10px; font-size:12px; cursor:pointer; }
+.carton-total{ margin-top:12px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--muted); text-align:right; }
 </style>
 </head>
 <body>
@@ -1090,6 +1114,10 @@ body{
   </div>
 
   <div class="controls">
+    <div class="carton-row">
+      <label for="activeCartonInput">Carton actif</label>
+      <input class="js-carton-input" id="activeCartonInput" type="text" inputmode="numeric" placeholder="n° (optionnel)" autocomplete="off">
+    </div>
     <button class="btn-scan" id="scanBtn">Scanner un code-barres</button>
     <div class="manual-row">
       <input type="text" id="manualInput" inputmode="numeric" placeholder="ou saisir le code-barres...">
@@ -1125,6 +1153,7 @@ body{
       <input type="text" id="deliveryDate" placeholder="Date">
     </div>
   </div>
+  <div class="filter-row hidden" id="cartonFilterRow" role="group" aria-label="Filtrer par carton"></div>
   <div class="delivery-list" id="deliveryList"></div>
   <div class="delivery-footer">
     <div class="delivery-total" id="deliveryTotal"></div>
@@ -1213,11 +1242,14 @@ let currentQty = 1;
 
 /* ================= PANIER / BON DE LIVRAISON ================= */
 const CART_KEY = 'sply_scan_cart_v1';
+const ACTIVE_CARTON_KEY = 'sply_scan_active_carton';
 
 function loadCart(){
   try{
     const raw = localStorage.getItem(CART_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const arr = raw ? JSON.parse(raw) : [];
+    // anciens bons de livraison (sans carton) : carton vide
+    return arr.map(c => ({ ...c, carton: String(c.carton ?? '').trim() }));
   }catch(e){ return []; }
 }
 function saveCart(cart){
@@ -1225,21 +1257,51 @@ function saveCart(cart){
 }
 let cart = loadCart();
 
-function addToCart(item, qty){
-  const existing = cart.find(c => c.sku === item.sku);
+/* ----- carton actif : s'applique a chaque article valide ----- */
+let activeCarton = '';
+try{ activeCarton = localStorage.getItem(ACTIVE_CARTON_KEY) || ''; }catch(e){}
+let cartonFilter = '__all__';
+
+function setActiveCarton(value, sourceEl){
+  activeCarton = String(value ?? '').trim();
+  try{ localStorage.setItem(ACTIVE_CARTON_KEY, activeCarton); }catch(e){}
+  document.querySelectorAll('.js-carton-input').forEach(el => {
+    if(el !== sourceEl && el.value !== activeCarton) el.value = activeCarton;
+  });
+}
+function cartonLabel(c){ return c ? 'Carton ' + c : 'Sans carton'; }
+function cartonCompare(a, b){
+  const x = String(a || ''), y = String(b || '');
+  if(x === y) return 0;
+  if(!x) return 1;
+  if(!y) return -1;
+  const nx = Number(x), ny = Number(y);
+  if(!isNaN(nx) && !isNaN(ny)) return nx - ny;
+  return x.localeCompare(y, 'fr', { numeric: true });
+}
+
+function addToCart(item, qty, carton){
+  const cn = String(carton ?? activeCarton ?? '').trim();
+  const existing = cart.find(c => c.sku === item.sku && c.carton === cn);
   if(existing){
     existing.qty += qty;
   } else {
     cart.push({
       cat: item.cat, type: item.type, vendor: item.vendor, title: item.title,
-      sku: item.sku, barcode: item.barcode, url: item.url, img: item.img, qty: qty
+      sku: item.sku, barcode: item.barcode, url: item.url, img: item.img, qty: qty, carton: cn
     });
   }
   saveCart(cart);
   renderTabBadge();
   renderDeliveryList();
 }
-function removeFromCart(sku){
+function removeCartLine(sku, carton){
+  cart = cart.filter(c => !(c.sku === sku && c.carton === carton));
+  saveCart(cart);
+  renderTabBadge();
+  renderDeliveryList();
+}
+function removeCartSku(sku){
   cart = cart.filter(c => c.sku !== sku);
   saveCart(cart);
   renderTabBadge();
@@ -1247,58 +1309,171 @@ function removeFromCart(sku){
 }
 function clearCart(){
   cart = [];
+  cartonFilter = '__all__';
   saveCart(cart);
   renderTabBadge();
   renderDeliveryList();
 }
 function renderTabBadge(){
   const badge = document.getElementById('tabBadge');
-  const totalLines = cart.length;
-  if(totalLines > 0){
-    badge.textContent = totalLines;
+  const totalRefs = new Set(cart.map(c => c.sku)).size;
+  if(totalRefs > 0){
+    badge.textContent = totalRefs;
     badge.classList.remove('hidden');
   } else {
     badge.classList.add('hidden');
   }
 }
+
+function renderCartonFilter(){
+  const row = document.getElementById('cartonFilterRow');
+  const cartons = [...new Set(cart.map(c => c.carton))];
+  if(!cartons.some(c => c)){
+    row.classList.add('hidden');
+    cartonFilter = '__all__';
+    return;
+  }
+  const named = cartons.filter(c => c).sort(cartonCompare);
+  const options = [['__all__', 'Tous'], ...named.map(c => [c, 'Carton ' + c])];
+  if(cartons.includes('')) options.push(['__none__', 'Sans carton']);
+  if(!options.some(o => o[0] === cartonFilter)) cartonFilter = '__all__';
+  row.innerHTML = options.map(([v, l]) =>
+    `<button class="filter-chip${v === cartonFilter ? ' active' : ''}" data-carton="${escapeAttr(v)}">${escapeHtml(l)}</button>`
+  ).join('');
+  row.classList.remove('hidden');
+}
+function visibleCartLines(){
+  if(cartonFilter === '__all__') return cart;
+  if(cartonFilter === '__none__') return cart.filter(c => !c.carton);
+  return cart.filter(c => c.carton === cartonFilter);
+}
 function renderDeliveryList(){
   const list = document.getElementById('deliveryList');
   const totalEl = document.getElementById('deliveryTotal');
+  renderCartonFilter();
   if(cart.length === 0){
     list.innerHTML = `<div class="delivery-empty">Aucun article scanné pour l'instant.<br>Scanne des codes-barres et valide les quantités pour les ajouter ici.</div>`;
     totalEl.textContent = '';
     return;
   }
+  const groups = new Map();
+  visibleCartLines().forEach(c => {
+    if(!groups.has(c.sku)) groups.set(c.sku, []);
+    groups.get(c.sku).push(c);
+  });
   let totalUnits = 0;
-  list.innerHTML = cart.map(c => {
-    totalUnits += c.qty;
+  list.innerHTML = [...groups.values()].map(ls => {
+    const c = ls[0];
+    const qty = ls.reduce((a, l) => a + l.qty, 0);
+    totalUnits += qty;
+    const cartonsTxt = ls.some(l => l.carton)
+      ? ls.map(l => `${cartonLabel(l.carton)} (×${l.qty})`).join(' · ')
+      : '';
     const photo = c.img
       ? `<img src="${escapeAttr(c.img)}" alt="">`
       : `<div class="ph"></div>`;
     return `
-      <div class="delivery-row">
+      <div class="delivery-row" data-sku="${escapeAttr(c.sku)}">
         ${photo}
         <div class="info">
           <div class="t">${escapeHtml(c.title)}</div>
           <div class="s">${escapeHtml(c.vendor)} · ${escapeHtml(c.sku)}</div>
+          ${cartonsTxt ? `<div class="c">${escapeHtml(cartonsTxt)}</div>` : ''}
         </div>
-        <div class="qty">×${c.qty}</div>
-        <button class="rm" onclick="removeFromCart('${escapeAttr(c.sku).replace(/'/g,"\\'")}')">×</button>
+        <div class="qty">×${qty}</div>
+        <button class="rm" aria-label="Retirer">×</button>
       </div>`;
   }).join('');
-  totalEl.innerHTML = `${cart.length} référence(s) · <b>${totalUnits}</b> unité(s) au total`;
+  const prefix = cartonFilter === '__all__' ? ''
+    : cartonFilter === '__none__' ? 'Sans carton · ' : `Carton ${cartonFilter} · `;
+  totalEl.innerHTML = `${escapeHtml(prefix)}${groups.size} référence(s) · <b>${totalUnits}</b> unité(s) au total`;
 }
+
+/* Fiche d'un article du bon de livraison : dans quel(s) carton(s) il se trouve */
+function openCartonDetail(sku){
+  const lines = cart.filter(c => c.sku === sku);
+  if(!lines.length){ closeSheet(); return; }
+  const c = lines[0];
+  const total = lines.reduce((a, l) => a + l.qty, 0);
+  const photo = c.img
+    ? `<img src="${escapeAttr(c.img)}" alt="">`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-3.2L15 4H9L7.2 7H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>`;
+  tagSheet.innerHTML = `
+    <div class="tag-handle"></div>
+    <button class="tag-close" onclick="closeSheet()">×</button>
+    <div class="tag-header">
+      <div class="tag-photo-sm">${photo}</div>
+      <div class="tag-header-text">
+        <div class="tag-cat">${escapeHtml(c.vendor)}</div>
+        <div class="tag-vendor">${escapeHtml(c.sku)}</div>
+        <div class="tag-title">${escapeHtml(c.title)}</div>
+      </div>
+    </div>
+    <div class="qty-label" style="margin-top:12px;">Cet article se trouve dans :</div>
+    <div id="cartonLines">
+      ${lines.map(l => `
+        <div class="carton-line">
+          <div class="cl-name">${escapeHtml(cartonLabel(l.carton))}</div>
+          <div class="cl-qty">×${l.qty}</div>
+          <button class="cl-rm" data-carton="${escapeAttr(l.carton)}">Retirer</button>
+        </div>`).join('')}
+    </div>
+    <div class="carton-total">Total : ${total} unité(s)</div>
+  `;
+  tagSheet.querySelectorAll('.cl-rm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      removeCartLine(sku, btn.dataset.carton);
+      openCartonDetail(sku);
+    });
+  });
+  overlay.classList.add('show');
+}
+
+document.getElementById('deliveryList').addEventListener('click', (e) => {
+  const row = e.target.closest('.delivery-row');
+  if(!row) return;
+  const sku = row.dataset.sku;
+  if(e.target.closest('.rm')){
+    const n = cart.filter(c => c.sku === sku).length;
+    if(n > 1 && !confirm('Cet article est dans plusieurs cartons. Le retirer de tous les cartons ?')) return;
+    removeCartSku(sku);
+    return;
+  }
+  openCartonDetail(sku);
+});
+document.getElementById('cartonFilterRow').addEventListener('click', (e) => {
+  const b = e.target.closest('.filter-chip');
+  if(!b) return;
+  cartonFilter = b.dataset.carton;
+  renderDeliveryList();
+});
+
+/* champ "Carton actif" de l'ecran de scan */
+const activeCartonInput = document.getElementById('activeCartonInput');
+activeCartonInput.value = activeCarton;
+activeCartonInput.addEventListener('input', () => setActiveCarton(activeCartonInput.value, activeCartonInput));
+activeCartonInput.addEventListener('keydown', (e) => {
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    activeCartonInput.blur();
+    document.getElementById('manualInput').focus(); // retour au champ de scan
+  }
+});
 
 function exportExcel(){
   if(cart.length === 0) return;
   const ref = document.getElementById('deliveryRef').value.trim();
   const dateVal = document.getElementById('deliveryDate').value.trim() || new Date().toLocaleDateString('fr-FR');
-  const rows = cart.map(c => ({
-    'SKU': c.sku,
-    'Quantité': c.qty
-  }));
+  const hasCarton = cart.some(c => c.carton);
+  const lines = cart.slice();
+  if(hasCarton) lines.sort((a, b) => cartonCompare(a.carton, b.carton));
+  const rows = lines.map(c => {
+    const r = { 'SKU': c.sku, 'Quantité': c.qty };
+    if(hasCarton) r['Carton'] = c.carton || '';
+    return r;
+  });
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:24},{wch:12}];
+  ws['!cols'] = hasCarton ? [{wch:24},{wch:12},{wch:12}] : [{wch:24},{wch:12}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Bon de livraison');
   const filename = `Bon_de_livraison${ref ? '_' + ref.replace(/[^a-z0-9]/gi,'_') : ''}_${dateVal.replace(/\//g,'-')}.xlsx`;
@@ -1786,6 +1961,10 @@ function renderConfirmView(){
       ${photo}
       <div class="confirm-title">${escapeHtml(item.title)}</div>
       <div class="confirm-qty">Ajouter <b>${currentQty}</b> unité(s) au bon de livraison ?</div>
+      <div class="carton-field">
+        <label for="confirmCartonInput">Carton n°</label>
+        <input class="js-carton-input" id="confirmCartonInput" type="text" inputmode="numeric" placeholder="—" autocomplete="off" value="${escapeAttr(activeCarton)}">
+      </div>
       <div class="confirm-actions">
         <button class="btn-confirm-back" id="confirmBack">← Modifier</button>
         <button class="btn-confirm-ok" id="confirmOk">Confirmer</button>
@@ -1793,10 +1972,17 @@ function renderConfirmView(){
     </div>
   `;
   document.getElementById('confirmBack').addEventListener('click', renderStepView);
+  const confirmCartonEl = document.getElementById('confirmCartonInput');
+  confirmCartonEl.addEventListener('input', () => setActiveCarton(confirmCartonEl.value, confirmCartonEl));
+  confirmCartonEl.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('confirmOk').click(); }
+  });
   document.getElementById('confirmOk').addEventListener('click', () => {
-    addToCart(item, currentQty);
+    const cn = String(confirmCartonEl.value || '').trim();
+    setActiveCarton(cn);
+    addToCart(item, currentQty, cn);
     closeSheet();
-    showToast(`${currentQty} × ${item.title} ajouté${currentQty>1?'s':''}`);
+    showToast(`${currentQty} × ${item.title} ajouté${currentQty>1?'s':''}${cn ? ' — carton ' + cn : ''}`);
   });
 }
 
