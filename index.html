@@ -1087,6 +1087,23 @@ body{
 .carton-line .cl-qty{ font-family:'JetBrains Mono',monospace; font-weight:700; font-size:16px; color:var(--rust); }
 .carton-line .cl-rm{ background:none; border:1px solid var(--line); color:var(--muted); border-radius:5px; padding:6px 10px; font-size:12px; cursor:pointer; }
 .carton-total{ margin-top:12px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--muted); text-align:right; }
+.cf-label{ flex-shrink:0; align-self:center; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; padding-right:4px; }
+.btn-printbl{ font-family:'Oswald',sans-serif; font-weight:600; font-size:14px; letter-spacing:0.03em; text-transform:uppercase; padding:13px 18px; background:var(--ink); color:var(--paper); border:none; border-radius:3px; cursor:pointer; }
+.carton-line .cl-ex{ font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:1px 5px; margin-left:6px; vertical-align:middle; }
+@media print{
+  .bl-print{ font-family:Arial,Helvetica,sans-serif; color:#000; }
+  .bl-print h1{ font-size:20pt; margin:0 0 2mm; }
+  .bl-meta{ font-size:10pt; color:#444; margin-bottom:6mm; }
+  .bl-carton{ margin-bottom:7mm; break-inside:avoid; }
+  .bl-carton-title{ font-size:13pt; font-weight:700; border-bottom:0.5mm solid #000; padding-bottom:1mm; margin-bottom:2mm; }
+  .bl-print table{ width:100%; border-collapse:collapse; font-size:10pt; }
+  .bl-print th{ text-align:left; border-bottom:0.3mm solid #888; padding:1mm 2mm; font-size:9pt; }
+  .bl-print td{ border-bottom:0.2mm solid #ccc; padding:1.2mm 2mm; vertical-align:top; }
+  .bl-print td.sku{ font-family:'Courier New',monospace; font-size:9pt; white-space:nowrap; }
+  .bl-print .q{ text-align:right; width:14mm; font-weight:700; }
+  .bl-sub{ text-align:right; font-size:10pt; margin-top:1.5mm; }
+  .bl-grand{ margin-top:6mm; border-top:0.6mm solid #000; padding-top:2mm; text-align:right; font-size:13pt; font-weight:700; }
+}
 </style>
 </head>
 <body>
@@ -1159,6 +1176,7 @@ body{
     <div class="delivery-total" id="deliveryTotal"></div>
     <div class="btn-row">
       <button class="btn-export" id="exportBtn">Exporter en Excel</button>
+      <button class="btn-printbl" id="printBlBtn">Imprimer</button>
       <button class="btn-clear" id="clearBtn">Vider</button>
     </div>
   </div>
@@ -1260,7 +1278,13 @@ let cart = loadCart();
 /* ----- carton actif : s'applique a chaque article valide ----- */
 let activeCarton = '';
 try{ activeCarton = localStorage.getItem(ACTIVE_CARTON_KEY) || ''; }catch(e){}
-let cartonFilter = '__all__';
+const EXCLUDED_KEY = 'sply_scan_bl_excluded';
+let excludedCartons = new Set();
+try{ excludedCartons = new Set(JSON.parse(localStorage.getItem(EXCLUDED_KEY) || '[]')); }catch(e){}
+function saveExcluded(){
+  try{ localStorage.setItem(EXCLUDED_KEY, JSON.stringify([...excludedCartons])); }catch(e){}
+}
+function hasNamedCartons(){ return cart.some(c => c.carton); }
 
 function setActiveCarton(value, sourceEl){
   activeCarton = String(value ?? '').trim();
@@ -1309,7 +1333,8 @@ function removeCartSku(sku){
 }
 function clearCart(){
   cart = [];
-  cartonFilter = '__all__';
+  excludedCartons = new Set();
+  saveExcluded();
   saveCart(cart);
   renderTabBadge();
   renderDeliveryList();
@@ -1330,22 +1355,27 @@ function renderCartonFilter(){
   const cartons = [...new Set(cart.map(c => c.carton))];
   if(!cartons.some(c => c)){
     row.classList.add('hidden');
-    cartonFilter = '__all__';
     return;
   }
-  const named = cartons.filter(c => c).sort(cartonCompare);
-  const options = [['__all__', 'Tous'], ...named.map(c => [c, 'Carton ' + c])];
-  if(cartons.includes('')) options.push(['__none__', 'Sans carton']);
-  if(!options.some(o => o[0] === cartonFilter)) cartonFilter = '__all__';
-  row.innerHTML = options.map(([v, l]) =>
-    `<button class="filter-chip${v === cartonFilter ? ' active' : ''}" data-carton="${escapeAttr(v)}">${escapeHtml(l)}</button>`
-  ).join('');
+  // retire de la selection les cartons qui n'existent plus
+  let changed = false;
+  [...excludedCartons].forEach(c => { if(!cartons.includes(c)){ excludedCartons.delete(c); changed = true; } });
+  if(changed) saveExcluded();
+  const all = [...cartons.filter(c => c).sort(cartonCompare), ...(cartons.includes('') ? [''] : [])];
+  const allIncluded = all.every(c => !excludedCartons.has(c));
+  row.innerHTML =
+    `<div class="cf-label">Cartons sur le BL</div>` +
+    `<button class="filter-chip${allIncluded ? ' active' : ''}" data-carton="__all__" aria-pressed="${allIncluded}">${allIncluded ? '✓ ' : ''}Tous</button>` +
+    all.map(c => {
+      const on = !excludedCartons.has(c);
+      return `<button class="filter-chip${on ? ' active' : ''}" data-carton="${escapeAttr(c)}" aria-pressed="${on}">${on ? '✓ ' : ''}${escapeHtml(cartonLabel(c))}</button>`;
+    }).join('');
   row.classList.remove('hidden');
 }
+// lignes retenues pour le bon de livraison (affichage, Excel, impression)
 function visibleCartLines(){
-  if(cartonFilter === '__all__') return cart;
-  if(cartonFilter === '__none__') return cart.filter(c => !c.carton);
-  return cart.filter(c => c.carton === cartonFilter);
+  if(!hasNamedCartons()) return cart;
+  return cart.filter(c => !excludedCartons.has(c.carton));
 }
 function renderDeliveryList(){
   const list = document.getElementById('deliveryList');
@@ -1361,6 +1391,11 @@ function renderDeliveryList(){
     if(!groups.has(c.sku)) groups.set(c.sku, []);
     groups.get(c.sku).push(c);
   });
+  if(groups.size === 0){
+    list.innerHTML = `<div class="delivery-empty">Aucun carton sélectionné.<br>Touche un carton ci-dessus pour l'ajouter au bon de livraison.</div>`;
+    totalEl.textContent = '0 référence · 0 unité';
+    return;
+  }
   let totalUnits = 0;
   list.innerHTML = [...groups.values()].map(ls => {
     const c = ls[0];
@@ -1384,8 +1419,10 @@ function renderDeliveryList(){
         <button class="rm" aria-label="Retirer">×</button>
       </div>`;
   }).join('');
-  const prefix = cartonFilter === '__all__' ? ''
-    : cartonFilter === '__none__' ? 'Sans carton · ' : `Carton ${cartonFilter} · `;
+  const allCartons = [...new Set(cart.map(c => c.carton))];
+  const partial = hasNamedCartons() && allCartons.some(c => excludedCartons.has(c));
+  const included = allCartons.filter(c => !excludedCartons.has(c)).sort(cartonCompare).map(c => c || 'sans carton');
+  const prefix = partial ? (included.length > 1 ? 'Cartons ' : 'Carton ') + included.join(', ') + ' · ' : '';
   totalEl.innerHTML = `${escapeHtml(prefix)}${groups.size} référence(s) · <b>${totalUnits}</b> unité(s) au total`;
 }
 
@@ -1413,7 +1450,7 @@ function openCartonDetail(sku){
     <div id="cartonLines">
       ${lines.map(l => `
         <div class="carton-line">
-          <div class="cl-name">${escapeHtml(cartonLabel(l.carton))}</div>
+          <div class="cl-name">${escapeHtml(cartonLabel(l.carton))}${hasNamedCartons() && excludedCartons.has(l.carton) ? ' <span class="cl-ex">hors BL</span>' : ''}</div>
           <div class="cl-qty">×${l.qty}</div>
           <button class="cl-rm" data-carton="${escapeAttr(l.carton)}">Retirer</button>
         </div>`).join('')}
@@ -1444,7 +1481,18 @@ document.getElementById('deliveryList').addEventListener('click', (e) => {
 document.getElementById('cartonFilterRow').addEventListener('click', (e) => {
   const b = e.target.closest('.filter-chip');
   if(!b) return;
-  cartonFilter = b.dataset.carton;
+  const v = b.dataset.carton;
+  const all = [...new Set(cart.map(c => c.carton))];
+  if(v === '__all__'){
+    // tout inclure ; si tout est deja inclus, tout retirer (pour choisir ensuite les cartons de la palette)
+    const allIncluded = all.every(c => !excludedCartons.has(c));
+    excludedCartons = allIncluded ? new Set(all) : new Set();
+  } else if(excludedCartons.has(v)){
+    excludedCartons.delete(v);
+  } else {
+    excludedCartons.add(v);
+  }
+  saveExcluded();
   renderDeliveryList();
 });
 
@@ -1460,12 +1508,55 @@ activeCartonInput.addEventListener('keydown', (e) => {
   }
 });
 
+function printDeliveryNote(){
+  const lines = visibleCartLines().slice();
+  if(lines.length === 0){ showToast('Aucun carton sélectionné'); return; }
+  const ref = document.getElementById('deliveryRef').value.trim();
+  const dateVal = document.getElementById('deliveryDate').value.trim() || new Date().toLocaleDateString('fr-FR');
+  const hasCarton = lines.some(c => c.carton);
+  lines.sort((a, b) => cartonCompare(a.carton, b.carton));
+  const byCarton = new Map();
+  lines.forEach(l => { if(!byCarton.has(l.carton)) byCarton.set(l.carton, []); byCarton.get(l.carton).push(l); });
+  let grand = 0;
+  const sections = [...byCarton.entries()].map(([carton, ls]) => {
+    const sub = ls.reduce((a, l) => a + l.qty, 0);
+    grand += sub;
+    return `<div class="bl-carton">
+      ${hasCarton ? `<div class="bl-carton-title">${escapeHtml(cartonLabel(carton))}</div>` : ''}
+      <table><thead><tr><th>SKU</th><th>Article</th><th class="q">Qté</th></tr></thead><tbody>
+        ${ls.map(l => `<tr><td class="sku">${escapeHtml(l.sku)}</td><td>${escapeHtml(deriveLabelTitle(l))}</td><td class="q">${l.qty}</td></tr>`).join('')}
+      </tbody></table>
+      ${hasCarton ? `<div class="bl-sub">Total ${escapeHtml(cartonLabel(carton))} : ${sub}</div>` : ''}
+    </div>`;
+  }).join('');
+  const printArea = document.getElementById('printArea');
+  printArea.innerHTML = `<div class="bl-print">
+    <h1>Bon de livraison</h1>
+    <div class="bl-meta">${ref ? 'Réf. : ' + escapeHtml(ref) + ' · ' : ''}${escapeHtml(dateVal)}</div>
+    ${sections}
+    <div class="bl-grand">Total : ${grand} unité(s)${hasCarton ? ' · ' + byCarton.size + ' carton(s)' : ''}</div>
+  </div>`;
+  // page A4 pour le bon de livraison (les etiquettes gardent leur format 54x25mm)
+  const st = document.createElement('style');
+  st.id = 'blPageStyle';
+  st.textContent = '@page{ size:A4 portrait; margin:12mm; }';
+  document.head.appendChild(st);
+  const cleanup = () => {
+    st.remove();
+    printArea.innerHTML = '';
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  setTimeout(() => window.print(), 100);
+}
+
 function exportExcel(){
   if(cart.length === 0) return;
   const ref = document.getElementById('deliveryRef').value.trim();
   const dateVal = document.getElementById('deliveryDate').value.trim() || new Date().toLocaleDateString('fr-FR');
-  const hasCarton = cart.some(c => c.carton);
-  const lines = cart.slice();
+  const lines = visibleCartLines().slice();
+  if(lines.length === 0){ showToast('Aucun carton sélectionné'); return; }
+  const hasCarton = lines.some(c => c.carton);
   if(hasCarton) lines.sort((a, b) => cartonCompare(a.carton, b.carton));
   const rows = lines.map(c => {
     const r = { 'SKU': c.sku, 'Quantité': c.qty };
@@ -1654,6 +1745,7 @@ function runSearch(){
 }
 runSearch();
 document.getElementById('exportBtn').addEventListener('click', exportExcel);
+document.getElementById('printBlBtn').addEventListener('click', printDeliveryNote);
 document.getElementById('clearBtn').addEventListener('click', () => {
   if(cart.length === 0) return;
   if(confirm('Vider tout le bon de livraison ? Cette action est irréversible.')){
