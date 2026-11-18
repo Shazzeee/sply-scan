@@ -1104,6 +1104,11 @@ body{
   .bl-sub{ text-align:right; font-size:10pt; margin-top:1.5mm; }
   .bl-grand{ margin-top:6mm; border-top:0.6mm solid #000; padding-top:2mm; text-align:right; font-size:13pt; font-weight:700; }
 }
+.bl-search{ position:relative; margin-top:10px; }
+.bl-search input{ width:100%; font-size:14px; padding:10px 38px 10px 12px; border:1px solid var(--line); border-radius:3px; background:var(--white); color:var(--ink); font-family:inherit; }
+.bl-search input:focus{ outline:2px solid var(--rust); outline-offset:-1px; }
+.bl-search-clear{ display:none; position:absolute; right:6px; top:50%; transform:translateY(-50%); width:28px; height:28px; border:none; border-radius:50%; background:var(--line); color:var(--ink); font-size:17px; line-height:1; cursor:pointer; }
+.bl-search-clear.show{ display:block; }
 </style>
 </head>
 <body>
@@ -1168,6 +1173,10 @@ body{
     <div class="delivery-meta">
       <input type="text" id="deliveryRef" placeholder="N° commande / référence">
       <input type="text" id="deliveryDate" placeholder="Date">
+    </div>
+    <div class="bl-search">
+      <input type="text" id="blSearchInput" autocomplete="off" placeholder="Chercher un article dans le bon (nom, SKU, code-barres, carton)…" aria-label="Chercher un article dans le bon de livraison">
+      <button class="bl-search-clear" id="blSearchClear" aria-label="Effacer la recherche">×</button>
     </div>
   </div>
   <div class="filter-row hidden" id="cartonFilterRow" role="group" aria-label="Filtrer par carton"></div>
@@ -1386,12 +1395,30 @@ function renderDeliveryList(){
     totalEl.textContent = '';
     return;
   }
-  const groups = new Map();
-  visibleCartLines().forEach(c => {
+  const rawQuery = (document.getElementById('blSearchInput') || {}).value || '';
+  document.getElementById('blSearchClear').classList.toggle('show', rawQuery.length > 0);
+  // "carton 2" = le carton n° 2 (et non un "2" trouve ailleurs dans un SKU ou un code-barres)
+  const cartonReqs = [];
+  const qRest = normalize(rawQuery).replace(/carton\s*([^\s]+)/g, (m, n) => { cartonReqs.push(n); return ' '; });
+  const tokens = qRest.split(/\s+/).filter(Boolean);
+  const bq = tokens.length > 0 || cartonReqs.length > 0;
+  let groups = new Map();
+  (bq ? cart : visibleCartLines()).forEach(c => {
     if(!groups.has(c.sku)) groups.set(c.sku, []);
     groups.get(c.sku).push(c);
   });
-  if(groups.size === 0){
+  if(bq){
+    // recherche dans le nom, la marque, le SKU, le code-barres et les cartons de chaque article
+    groups = new Map([...groups].filter(([sku, ls]) => {
+      const hay = normalize([ls[0].title, ls[0].vendor, sku, ls[0].barcode, ...ls.filter(l => !l.carton).map(() => 'sans carton')].join(' '));
+      return cartonReqs.every(n => ls.some(l => normalize(l.carton) === n)) && tokens.every(t => hay.includes(t));
+    }));
+    if(groups.size === 0){
+      list.innerHTML = `<div class="delivery-empty">Aucun article du bon de livraison ne correspond à « ${escapeHtml(rawQuery.trim())} ».<br>Cet article n'est dans aucun carton.</div>`;
+      totalEl.textContent = 'Recherche dans tous les cartons · 0 résultat';
+      return;
+    }
+  } else if(groups.size === 0){
     list.innerHTML = `<div class="delivery-empty">Aucun carton sélectionné.<br>Touche un carton ci-dessus pour l'ajouter au bon de livraison.</div>`;
     totalEl.textContent = '0 référence · 0 unité';
     return;
@@ -1402,7 +1429,7 @@ function renderDeliveryList(){
     const qty = ls.reduce((a, l) => a + l.qty, 0);
     totalUnits += qty;
     const cartonsTxt = ls.some(l => l.carton)
-      ? ls.map(l => `${cartonLabel(l.carton)} (×${l.qty})`).join(' · ')
+      ? ls.map(l => `${cartonLabel(l.carton)} (×${l.qty})${hasNamedCartons() && excludedCartons.has(l.carton) ? ' – hors BL' : ''}`).join(' · ')
       : '';
     const photo = c.img
       ? `<img src="${escapeAttr(c.img)}" alt="">`
@@ -1419,6 +1446,10 @@ function renderDeliveryList(){
         <button class="rm" aria-label="Retirer">×</button>
       </div>`;
   }).join('');
+  if(bq){
+    totalEl.innerHTML = `Recherche dans tous les cartons · ${groups.size} article(s) · <b>${totalUnits}</b> unité(s)`;
+    return;
+  }
   const allCartons = [...new Set(cart.map(c => c.carton))];
   const partial = hasNamedCartons() && allCartons.some(c => excludedCartons.has(c));
   const included = allCartons.filter(c => !excludedCartons.has(c)).sort(cartonCompare).map(c => c || 'sans carton');
@@ -1506,6 +1537,14 @@ activeCartonInput.addEventListener('keydown', (e) => {
     activeCartonInput.blur();
     document.getElementById('manualInput').focus(); // retour au champ de scan
   }
+});
+
+document.getElementById('blSearchInput').addEventListener('input', () => renderDeliveryList());
+document.getElementById('blSearchClear').addEventListener('click', () => {
+  const i = document.getElementById('blSearchInput');
+  i.value = '';
+  renderDeliveryList();
+  i.focus();
 });
 
 function printDeliveryNote(){
