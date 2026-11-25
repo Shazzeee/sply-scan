@@ -1395,6 +1395,8 @@ function renderDeliveryList(){
     totalEl.textContent = '';
     return;
   }
+  const clearBtnEl = document.getElementById('clearBtn');
+  clearBtnEl.textContent = (hasNamedCartons() && cart.some(c => excludedCartons.has(c.carton))) ? 'Vider cochés' : 'Vider';
   const rawQuery = (document.getElementById('blSearchInput') || {}).value || '';
   document.getElementById('blSearchClear').classList.toggle('show', rawQuery.length > 0);
   // "carton 2" = le carton n° 2 (et non un "2" trouve ailleurs dans un SKU ou un code-barres)
@@ -1793,8 +1795,22 @@ document.getElementById('exportBtn').addEventListener('click', exportExcel);
 document.getElementById('printBlBtn').addEventListener('click', printDeliveryNote);
 document.getElementById('clearBtn').addEventListener('click', () => {
   if(cart.length === 0) return;
-  if(confirm('Vider tout le bon de livraison ? Cette action est irréversible.')){
-    clearCart();
+  const partial = hasNamedCartons() && cart.some(c => excludedCartons.has(c.carton));
+  if(!partial){
+    if(confirm('Vider tout le bon de livraison ? Cette action est irréversible.')) clearCart();
+    return;
+  }
+  // sélection partielle : on ne vide que les cartons cochés, les autres sont conservés
+  const lines = visibleCartLines();
+  if(lines.length === 0){ showToast('Aucun carton sélectionné'); return; }
+  const names = [...new Set(lines.map(c => c.carton))].sort(cartonCompare).map(c => c ? 'n°' + c : 'sans carton');
+  const units = lines.reduce((a, l) => a + l.qty, 0);
+  if(confirm(`Vider ${names.length > 1 ? 'les cartons' : 'le carton'} ${names.join(', ')} du bon de livraison (${units} unité(s)) ?\nLes autres cartons sont conservés. Cette action est irréversible.`)){
+    cart = cart.filter(c => !lines.includes(c));
+    saveCart(cart);
+    renderTabBadge();
+    renderDeliveryList();
+    showToast(names.length > 1 ? 'Cartons vidés' : 'Carton vidé');
   }
 });
 
